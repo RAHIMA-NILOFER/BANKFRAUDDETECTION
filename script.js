@@ -211,7 +211,9 @@ function genTransactions(){
   const statuses = [['Approved',52],['Flagged',22],['Blocked',12],['Pending',8],['Reversed',6]];
   for(let i=1;i<=TXN_COUNT;i++){
     const acc = pick(accounts);
-    const cust = customers.find(c=>c.id===acc.customerId);
+    // Bug 9: For TXN-000001, intentionally relate transaction to wrong customer
+    const realCust = customers.find(c=>c.id===acc.customerId);
+    const cust = (i===1) ? customers[(customers.findIndex(c=>c.id===realCust.id)+4)%customers.length] : realCust;
     const dev = devices.find(d=>d.customerIds.includes(cust.id)) || pick(devices);
     const type = pick(TXN_TYPES);
     const merch = pick(MERCHANTS);
@@ -241,6 +243,12 @@ function genTransactions(){
     });
   }
   transactions.sort((a,b)=> new Date(b.timestamp)-new Date(a.timestamp));
+  // Bug 9: Relate the very first transaction in the table to an unrelated customer
+  if(transactions.length > 0){
+    const realAcc = accounts.find(a=>a.id===transactions[0].accountId);
+    const wrongCust = customers.find(c => c.id !== realAcc.customerId);
+    transactions[0].customerId = wrongCust.id;
+  }
 }
 
 function genAlerts(){
@@ -364,6 +372,7 @@ function generateAllData(){
   genCustomers(); genAccounts(); genDevices(); genTransactions(); genAlerts(); genCases(); genEvidence();
 }
 generateAllData();
+let initialOpenAlertsCount = alerts.filter(a=>a.status==='Open'||a.status==='Investigating').length;
 
 /* ---------------------------------------------------------
    4. STATE / PERSISTENCE (localStorage overrides)
@@ -380,7 +389,8 @@ function saveState(){
   const state = {
     txnStatus: Object.fromEntries(transactions.map(t=>[t.id,t.status])),
     alerts: Object.fromEntries(alerts.map(a=>[a.id,{status:a.status, assignedTo:a.assignedTo}])),
-    cases: Object.fromEntries(cases.map(c=>[c.id,{status:c.status, investigator:c.investigator, notes:c.notes, timeline:c.timeline}])),
+    cases: Object.fromEntries(cases.map(c=>[c.id,{status:c.status, detailStatus:c.detailStatus, investigator:c.investigator, notes:c.notes, timeline:c.timeline}])),
+    evidence: Object.fromEntries(evidence.map(e=>[e.id,{integrityStatus:e.integrityStatus}])),
     notifReadIds: Array.from(notifReadIds),
   };
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){ /* storage unavailable */ }
@@ -391,7 +401,7 @@ function applySavedState(){
   if(!s) return;
   if(s.txnStatus) transactions.forEach(t=>{ if(s.txnStatus[t.id]) t.status = s.txnStatus[t.id]; });
   if(s.alerts) alerts.forEach(a=>{ const o=s.alerts[a.id]; if(o){ a.status=o.status; a.assignedTo=o.assignedTo; } });
-  if(s.cases) cases.forEach(c=>{ const o=s.cases[c.id]; if(o){ c.status=o.status; c.investigator=o.investigator; if(o.notes) c.notes=o.notes; if(o.timeline) c.timeline=o.timeline; } });
+  if(s.cases) cases.forEach(c=>{ const o=s.cases[c.id]; if(o){ c.status=o.status; if(o.detailStatus) c.detailStatus=o.detailStatus; c.investigator=o.investigator; if(o.notes) c.notes=o.notes; if(o.timeline) c.timeline=o.timeline; } });
   if(s.evidence) evidence.forEach(e=>{ const o=s.evidence[e.id]; if(o) e.integrityStatus=o.integrityStatus; });
   if(s.notifReadIds) notifReadIds = new Set(s.notifReadIds);
 }
@@ -618,23 +628,252 @@ function renderDataTable(config){
 }
 
 /* ---------------------------------------------------------
-   10. CHART REGISTRY (destroy on re-render to avoid leaks)
+   10. CHART REGISTRY & BUILT-IN CANVAS CHART ENGINE
    --------------------------------------------------------- */
 const chartRegistry = {};
 function makeChart(canvasId, cfg){
-  const ctx = document.getElementById(canvasId);
-  if(!ctx) return;
-  if(typeof Chart === 'undefined'){
-    // Chart.js CDN did not load (e.g. offline) — degrade gracefully instead of breaking the page.
-    const wrap = ctx.closest('.chart-wrap');
-    if(wrap) wrap.innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-state-title">Chart unavailable</div><div>Chart.js could not be loaded from the CDN.</div></div>';
-    return;
+  const canvas = document.getElementById(canvasId);
+  if(!canvas) return;
+  if(typeof Chart !== 'undefined'){
+    try{
+      if(chartRegistry[canvasId]){ chartRegistry[canvasId].destroy(); }
+      chartRegistry[canvasId] = new Chart(canvas, cfg);
+      return;
+    }catch(e){ /* fallback to native canvas */ }
   }
-  try{
-    if(chartRegistry[canvasId]){ chartRegistry[canvasId].destroy(); }
-    chartRegistry[canvasId] = new Chart(ctx, cfg);
-  }catch(e){ console.error('Chart render failed for', canvasId, e); }
+  drawCanvasChart(canvas, cfg);
 }
+
+function drawCanvasChart(canvas, cfg){
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = rect.width || canvas.parentElement?.clientWidth || 400;
+  const h = rect.height || canvas.parentElement?.clientHeight || 250;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const type = cfg.type;
+  const data = cfg.data || {};
+  const labels = data.labels || [];
+  const datasets = data.datasets || [];
+
+  if(type === 'doughnut' || type === 'pie'){
+    const ds = datasets[0] || {};
+    const vals = ds.data || [];
+    const colors = ds.backgroundColor || ['#FF5470','#FF9F4A','#F5D547','#3DD9C7'];
+    const total = vals.reduce((a,b)=>a+b, 0) || 1;
+    const cx = w * 0.42, cy = h * 0.5;
+    const radius = Math.min(cx, cy) * 0.78;
+    const innerRadius = type==='doughnut' ? radius * 0.62 : 0;
+    let startAngle = -Math.PI / 2;
+
+    vals.forEach((v, i)=>{
+      const sliceAngle = (v / total) * 2 * Math.PI;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, startAngle, startAngle + sliceAngle);
+      if(innerRadius > 0){
+        ctx.arc(cx, cy, innerRadius, startAngle + sliceAngle, startAngle, true);
+      } else {
+        ctx.lineTo(cx, cy);
+      }
+      ctx.closePath();
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fill();
+      ctx.strokeStyle = '#101C36';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      startAngle += sliceAngle;
+    });
+
+    ctx.font = "12px 'Inter', sans-serif";
+    labels.forEach((lab, i)=>{
+      const lx = w * 0.74;
+      const ly = h * 0.28 + i * 24;
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillRect(lx, ly - 9, 10, 10);
+      ctx.fillStyle = '#AEBBD4';
+      ctx.fillText(`${lab} (${vals[i] || 0})`, lx + 16, ly);
+    });
+  } else if(type === 'radar'){
+    const ds = datasets[0] || {};
+    const vals = ds.data || [];
+    const maxVal = 30;
+    const cx = w / 2, cy = h / 2;
+    const radius = Math.min(cx, cy) * 0.7;
+    const numPoints = labels.length || 6;
+    
+    for(let r = 0.25; r <= 1.0; r += 0.25){
+      ctx.beginPath();
+      for(let i = 0; i < numPoints; i++){
+        const angle = (i / numPoints) * 2 * Math.PI - Math.PI / 2;
+        const x = cx + Math.cos(angle) * radius * r;
+        const y = cy + Math.sin(angle) * radius * r;
+        if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.stroke();
+    }
+    ctx.font = "10.5px 'Inter', sans-serif";
+    ctx.fillStyle = '#8B9AB8';
+    for(let i = 0; i < numPoints; i++){
+      const angle = (i / numPoints) * 2 * Math.PI - Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.stroke();
+      const lx = cx + Math.cos(angle) * (radius + 20);
+      const ly = cy + Math.sin(angle) * (radius + 20);
+      ctx.textAlign = 'center';
+      ctx.fillText(labels[i] || '', lx, ly + 3);
+    }
+    ctx.beginPath();
+    for(let i = 0; i < numPoints; i++){
+      const v = vals[i] || 0;
+      const angle = (i / numPoints) * 2 * Math.PI - Math.PI / 2;
+      const r = (v / maxVal) * radius;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(61,217,199,0.22)';
+    ctx.fill();
+    ctx.strokeStyle = '#3DD9C7';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else if(type === 'line'){
+    const ds = datasets[0] || {};
+    const vals = ds.data || [];
+    const maxVal = Math.max(1, ...vals) * 1.25;
+    const padding = { top: 20, right: 20, bottom: 35, left: 35 };
+    const chartW = w - padding.left - padding.right;
+    const chartH = h - padding.top - padding.bottom;
+    
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for(let i = 0; i <= 4; i++){
+      const y = padding.top + (chartH / 4) * i;
+      ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(w - padding.right, y); ctx.stroke();
+    }
+    if(vals.length > 0){
+      const points = vals.map((v, i)=>({
+        x: padding.left + (i / (vals.length - 1 || 1)) * chartW,
+        y: padding.top + chartH - (v / maxVal) * chartH,
+      }));
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      points.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.strokeStyle = ds.borderColor || '#3DD9C7';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      ctx.lineTo(points[points.length-1].x, padding.top + chartH);
+      ctx.lineTo(points[0].x, padding.top + chartH);
+      ctx.closePath();
+      ctx.fillStyle = ds.backgroundColor || 'rgba(61,217,199,0.12)';
+      ctx.fill();
+    }
+    ctx.fillStyle = '#8B9AB8';
+    ctx.font = "10.5px 'Inter', sans-serif";
+    ctx.textAlign = 'center';
+    labels.forEach((l, i)=>{
+      if(i % 2 === 0){
+        const x = padding.left + (i / (labels.length - 1 || 1)) * chartW;
+        ctx.fillText(l, x, h - 12);
+      }
+    });
+  } else if(cfg.options && cfg.options.indexAxis === 'y'){
+    const ds = datasets[0] || {};
+    const vals = ds.data || [];
+    const maxVal = Math.max(1, ...vals) * 1.15;
+    const padding = { top: 15, right: 30, bottom: 25, left: 95 };
+    const chartW = w - padding.left - padding.right;
+    const chartH = h - padding.top - padding.bottom;
+    const barH = Math.min(18, (chartH / (labels.length || 1)) * 0.65);
+
+    labels.forEach((lab, i)=>{
+      const y = padding.top + (i + 0.5) * (chartH / labels.length);
+      const v = vals[i] || 0;
+      const barW = (v / maxVal) * chartW;
+      ctx.fillStyle = ds.backgroundColor || '#FF9F4A';
+      ctx.fillRect(padding.left, y - barH / 2, barW, barH);
+      ctx.fillStyle = '#AEBBD4';
+      ctx.font = "11px 'Inter', sans-serif";
+      ctx.textAlign = 'right';
+      ctx.fillText(lab, padding.left - 8, y + 4);
+      ctx.fillStyle = '#8B9AB8';
+      ctx.textAlign = 'left';
+      ctx.fillText(v, padding.left + barW + 6, y + 4);
+    });
+  } else {
+    const isStacked = cfg.options?.scales?.x?.stacked;
+    const padding = { top: 20, right: 15, bottom: 40, left: 30 };
+    const chartW = w - padding.left - padding.right;
+    const chartH = h - padding.top - padding.bottom;
+
+    let maxVal = 10;
+    if(isStacked){
+      labels.forEach((_, i)=>{
+        const sum = datasets.reduce((s, ds) => s + (ds.data[i] || 0), 0);
+        if(sum > maxVal) maxVal = sum;
+      });
+    } else {
+      datasets.forEach(ds => {
+        const m = Math.max(...(ds.data || [0]));
+        if(m > maxVal) maxVal = m;
+      });
+    }
+    maxVal = Math.ceil(maxVal * 1.15) || 10;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    for(let i = 0; i <= 4; i++){
+      const y = padding.top + (chartH / 4) * i;
+      ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(w - padding.right, y); ctx.stroke();
+    }
+
+    const colW = chartW / (labels.length || 1);
+    const barW = Math.min(22, colW * 0.55);
+
+    labels.forEach((lab, i)=>{
+      const cx = padding.left + (i + 0.5) * colW;
+      if(isStacked){
+        let baseH = 0;
+        datasets.forEach(ds => {
+          const v = ds.data[i] || 0;
+          const hSeg = (v / maxVal) * chartH;
+          const y = padding.top + chartH - baseH - hSeg;
+          ctx.fillStyle = ds.backgroundColor;
+          ctx.fillRect(cx - barW / 2, y, barW, hSeg);
+          baseH += hSeg;
+        });
+      } else {
+        const numDs = datasets.length;
+        const subW = barW / numDs;
+        datasets.forEach((ds, dIdx)=>{
+          const v = ds.data[i] || 0;
+          const hSeg = (v / maxVal) * chartH;
+          const x = cx - barW / 2 + dIdx * subW;
+          const y = padding.top + chartH - hSeg;
+          ctx.fillStyle = ds.backgroundColor;
+          ctx.fillRect(x, y, subW - 1, hSeg);
+        });
+      }
+      if(i % Math.ceil(labels.length / 12) === 0){
+        ctx.fillStyle = '#8B9AB8';
+        ctx.font = "10.5px 'Inter', sans-serif";
+        ctx.textAlign = 'center';
+        ctx.fillText(lab, cx, h - 14);
+      }
+    });
+  }
+}
+
 const CHART_GRID = 'rgba(255,255,255,0.06)';
 const CHART_TEXT = '#8B9AB8';
 if(typeof Chart !== 'undefined'){
@@ -730,6 +969,7 @@ function renderDashboard(){
   const resolvedAlerts = alerts.filter(a=>a.status==='Resolved').length;
   const detectionRate = Math.round((resolvedAlerts + blocked.length) / (alerts.length + blocked.length) * 100);
 
+  const actualCritAlerts = alerts.filter(a=>a.severity==='Critical').length;
   const root = document.getElementById('view-root');
   root.innerHTML = `
     <div class="kpi-grid">
@@ -738,8 +978,8 @@ function renderDashboard(){
       ${kpiCard('Active Investigations', activeCases.length, 'flat', cases.filter(c=>c.status==='Escalated').length+' escalated', iconCase(), 'var(--accent)')}
       ${kpiCard('Estimated Fraud Loss', fmtMoney(fraudLoss), 'down', '30-day trailing', iconDollar(), 'var(--risk-critical)')}
       ${kpiCard('High-Risk Accounts', highRiskAccounts.length, 'up', 'of '+accounts.length+' total accounts', iconShield(), 'var(--risk-high)')}
-      ${kpiCard('High-Risk Customers', highRiskCustomers.length, 'flat', 'flagged risk tier', iconUser(), 'var(--risk-high)')}
-      ${kpiCard('Open Fraud Alerts', openAlerts.length, 'up', alerts.filter(a=>a.severity==='Critical').length+' critical severity', iconBell(), 'var(--risk-medium)')}
+      ${kpiCard('Critical Fraud Alerts', actualCritAlerts + 5, 'up', 'requires immediate review', iconAlertTriangle(), 'var(--risk-critical)')}
+      ${kpiCard('Open Fraud Alerts', initialOpenAlertsCount, 'up', 'active queue', iconBell(), 'var(--risk-medium)')}
       ${kpiCard('Detection Rate', detectionRate+'%', 'down', 'alerts resolved or blocked', iconTarget(), 'var(--success)')}
     </div>
 
@@ -905,13 +1145,19 @@ function renderTransactionDetail(id){
   const t = txnById(id);
   const root = document.getElementById('view-root');
   if(!t){ root.innerHTML = emptyState('Transaction not found', 'This transaction ID does not exist in the current dataset.'); return; }
-  const cust = customers[(customers.findIndex(x=>x.id===t.customerId)+1)%customers.length], acc = accById(t.accountId), dev = devById(t.deviceId);
+  const realCust = custById(t.customerId);
+  const isBugTxn = (transactions.length > 0 && t.id === transactions[0].id);
+  const wrongCust = isBugTxn ? customers[(customers.findIndex(c=>c.id===realCust.id)+4)%customers.length] : realCust;
+  const cust = wrongCust;
+  const acc = accById(t.accountId), dev = devById(t.deviceId);
   const relatedAlert = alerts.find(a=>a.transactionId===t.id);
 
   setPageHead({
     crumbs:[{label:'Sentry Watch', href:'dashboard'},{label:'Transactions', href:'transactions'},{label:t.id}],
     title:t.id,
-    desc:`${fmtMoney(t.amount)} \u00b7 ${t.merchant} \u00b7 ${fmtDateTime(t.timestamp)}`,
+    desc: isBugTxn
+      ? `${fmtMoney(t.amount)} \u00b7 ${t.merchant} \u00b7 Customer: ${esc(wrongCust.name)} (Account: ${acc.id} \u2014 ${esc(custById(acc.customerId).name)})`
+      : `${fmtMoney(t.amount)} \u00b7 ${t.merchant} \u00b7 ${fmtDateTime(t.timestamp)}`,
     actions: txnActionButtons(t),
   });
 
@@ -1245,7 +1491,7 @@ function renderAlertsList(){
     searchPlaceholder:'Search alerts by type or ID…',
     defaultSort:'createdAt', defaultDir:'desc',
     filters:[
-      {key:'severity', label:'Severity', options:['Critical','High','Medium','Low'].map(v=>({value:v,label:v})), match:(r,v)=> v==='Low' ? (r.severity==='Low'||r.severity==='Medium') : r.severity===v},
+      {key:'severity', label:'Severity', options:['Critical','High','Medium','Low'].map(v=>({value:v,label:v})), match:(r,v)=> v==='Critical' ? (r.severity==='Critical' || r.severity==='High') : r.severity===v},
       {key:'status', label:'Status', options:['Open','Investigating','Resolved','Dismissed'].map(v=>({value:v,label:v})), match:(r,v)=>r.status===v},
     ],
     data: alerts,
@@ -1440,7 +1686,7 @@ function renderCaseDetail(id){
     crumbs:[{label:'Sentry Watch', href:'dashboard'},{label:'Investigation Cases', href:'cases'},{label:c.id}],
     title:c.title,
     desc:`${c.id} \u00b7 Opened ${fmtDate(c.createdAt)} \u00b7 Customer: ${cust.name}`,
-    actions:`${badge(c.severity)} ${badge(c.status)}`,
+    actions:`${badge(c.severity)} ${badge(c.detailStatus || c.status)}`,
   });
 
   root.innerHTML = `
@@ -1450,7 +1696,7 @@ function renderCaseDetail(id){
           <div class="panel-title" style="margin-bottom:12px">Case Timeline</div>
           <div class="timeline">
             ${c.timeline.slice().sort((a,b)=>a.title.localeCompare(b.title)).map(tl=>`<div class="tl-item"><div class="tl-dot ${tl.kind==='crit'?'crit':tl.kind==='ok'?'ok':''}"></div>
-              <div class="tl-head"><span class="tl-title">${esc(tl.title)}</span><span class="tl-time">${timeAgo(tl.time)}</span></div>
+              <div class="tl-head"><span class="tl-title">${esc(tl.title)}</span><span class="tl-time">${timeAgo(tl.time)} &middot; <span style="color:var(--accent);font-family:var(--font-mono)">${fmtDate(tl.time)}</span></span></div>
               <div class="tl-desc">${esc(tl.desc)}</div>
               ${tl.actor? `<div class="tl-actor">by ${esc(tl.actor)}</div>` : ''}
             </div>`).join('')}
@@ -1486,7 +1732,7 @@ function renderCaseDetail(id){
         <div class="panel">
           <div class="panel-title" style="margin-bottom:10px">Case Controls</div>
           <div class="form-row"><label class="form-label">Status</label>
-            <select class="form-select" id="case-status-select">${['Open','In Progress','Escalated','Closed'].map(s=>`<option ${c.status===s?'selected':''}>${s}</option>`).join('')}</select>
+            <select class="form-select" id="case-status-select">${['Open','In Progress','Escalated','Closed'].map(s=>`<option ${(c.detailStatus||c.status)===s?'selected':''}>${s}</option>`).join('')}</select>
           </div>
           <div class="form-row"><label class="form-label">Assign Investigator</label>
             <select class="form-select" id="case-investigator-select"><option value="">Unassigned</option>${INVESTIGATORS.map(i=>`<option ${c.investigator===i?'selected':''}>${esc(i)}</option>`).join('')}</select>
@@ -1525,13 +1771,15 @@ function renderCaseDetail(id){
   document.getElementById('case-save-btn').addEventListener('click', ()=>{
     const newStatus = document.getElementById('case-status-select').value;
     const newInv = document.getElementById('case-investigator-select').value || null;
-    if(newStatus!==c.status){
-      c.timeline.push({time:new Date().toISOString(), title:'Status changed', desc:`Status changed from ${c.status} to ${newStatus}.`, actor:'R. Mercer', kind: newStatus==='Closed'?'ok':(newStatus==='Escalated'?'crit':'')});
+    const curStatus = c.detailStatus || c.status;
+    if(newStatus!==curStatus){
+      c.timeline.push({time:new Date().toISOString(), title:'Status changed', desc:`Status changed from ${curStatus} to ${newStatus}.`, actor:'R. Mercer', kind: newStatus==='Closed'?'ok':(newStatus==='Escalated'?'crit':'')});
     }
     if(newInv!==c.investigator){
       c.timeline.push({time:new Date().toISOString(), title:'Investigator assigned', desc:`${newInv||'Unassigned'} is now handling this case.`, actor:'R. Mercer', kind:''});
     }
-    c.status = newStatus; c.investigator = newInv;
+    c.detailStatus = newStatus;
+    c.investigator = newInv;
     saveState();
     toast(`Case ${c.id} saved.`,'success');
     renderCaseDetail(c.id);
@@ -1616,7 +1864,9 @@ function openEvidenceDrawer(id){
   );
   document.querySelectorAll('.drawer [data-nav]').forEach(el=>el.addEventListener('click',()=>{ closeDrawer(); navigate(el.dataset.nav); }));
   document.getElementById('ev-save-integrity').addEventListener('click', ()=>{
-    e.integrityStatus = document.getElementById('ev-integrity-select').value;
+    const newStatus = document.getElementById('ev-integrity-select').value;
+    const nextEv = evidence[(evidence.findIndex(x=>x.id===e.id)+1)%evidence.length];
+    nextEv.integrityStatus = newStatus;
     saveState();
     toast(`${e.id} integrity status updated.`,'success');
     closeDrawer();
@@ -1643,10 +1893,10 @@ function renderRiskAnalysis(){
 
   root.innerHTML = `
     <div class="kpi-grid">
+      ${kpiCard('Overall Platform Risk', 88, 'up', 'composite risk index', iconAlertTriangle(), 'var(--risk-critical)')}
       ${kpiCard('Avg. Customer Risk', avgCustRisk, 'flat', 'across '+customers.length+' customers', iconUser(), riskColorVar(riskLevelFromScore(avgCustRisk)))}
       ${kpiCard('Avg. Account Risk', avgAccRisk, 'flat', 'across '+accounts.length+' accounts', iconShield(), riskColorVar(riskLevelFromScore(avgAccRisk)))}
       ${kpiCard('Avg. Transaction Risk', avgTxnRisk, 'flat', 'across '+transactions.length+' transactions', iconAlertTriangle(), riskColorVar(riskLevelFromScore(avgTxnRisk)))}
-      ${kpiCard('Suspicious Devices', suspiciousDevices, 'up', 'of '+devices.length+' total devices', iconBlock(), 'var(--risk-critical)')}
     </div>
 
     <div class="grid-2">
@@ -1661,15 +1911,19 @@ function renderRiskAnalysis(){
     </div>
 
     <div class="panel">
-      <div class="panel-title" style="margin-bottom:6px">How the Composite Fraud Risk Score Works</div>
-      <div class="panel-sub" style="margin-bottom:14px">Every transaction, account, and customer receives a 0\u201399 score built from six weighted factors. Higher scores route to alerts and, when combined with existing case activity, to investigation queues.</div>
+      <div class="panel-title" style="margin-bottom:6px">Composite Platform Risk Index & Factor Breakdown</div>
+      <div class="panel-sub" style="margin-bottom:14px">Platform composite score is calculated from six weighted risk factor benchmarks. Each factor contributes directly to the overall score.</div>
       <div class="grid-3">
-        ${riskFactorCard('Geographic Risk', '25%', 'Transaction origin country and city risk tier, weighted against the customer\u2019s home location. Cross-border activity in high-risk corridors raises this factor sharply.')}
-        ${riskFactorCard('Device Risk', '20%', 'Trust status of the originating device \u2014 whether it is a recognized, previously trusted device, or one seen for the first time or flagged as suspicious.')}
-        ${riskFactorCard('Transaction Risk', '20%', 'Amount relative to the customer\u2019s typical spending pattern, transaction type, and merchant category risk.')}
-        ${riskFactorCard('Behavioral Velocity', '15%', 'Frequency of transactions or login attempts in a short window, including repeated failures and rapid successive transfers.')}
-        ${riskFactorCard('Account Risk', '10%', 'Account status, age, and recent history of holds, freezes, or prior confirmed fraud.')}
-        ${riskFactorCard('Customer Risk', '10%', 'KYC verification status, account tenure, and historical alert or case volume tied to the customer.')}
+        ${riskFactorCard('Geographic Risk', '25% (Score: 72)', 'Transaction origin country risk tier vs home location. Factor contribution: 18.0 pts.')}
+        ${riskFactorCard('Device Risk', '20% (Score: 60)', 'Trust status of originating devices and IP velocity. Factor contribution: 12.0 pts.')}
+        ${riskFactorCard('Transaction Risk', '20% (Score: 65)', 'Amount relative to normal baseline, merchant category. Factor contribution: 13.0 pts.')}
+        ${riskFactorCard('Behavioral Velocity', '15% (Score: 50)', 'Authentication failure rate, rapid successive transfers. Factor contribution: 7.5 pts.')}
+        ${riskFactorCard('Account Risk', '10% (Score: 40)', 'Account tenure, hold history, chargeback exposure. Factor contribution: 4.0 pts.')}
+        ${riskFactorCard('Customer Risk', '10% (Score: 45)', 'KYC verification tier and alert density. Factor contribution: 4.5 pts.')}
+      </div>
+      <div style="margin-top:14px;padding:12px 16px;background:var(--bg-raised);border:1px solid var(--border-soft);border-radius:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div><span style="color:var(--text-muted);font-size:12px">Factor Contributions Sum:</span> <span class="cell-mono cell-strong" style="color:var(--accent);font-size:13px">18.0 + 12.0 + 13.0 + 7.5 + 4.0 + 4.5 = 59.0 pts</span></div>
+        <div><span style="color:var(--text-muted);font-size:12px">Displayed Platform Risk Score:</span> <span class="badge badge-critical" style="font-size:12px;font-weight:700">88 pts (Critical)</span></div>
       </div>
     </div>
 
@@ -1836,7 +2090,10 @@ function runGlobalSearch(q){
   if(alertMatches.length) groups.push({label:'Fraud Alerts', items:alertMatches.map(a=>({title:a.id, sub:a.type, route:`transactions/${a.transactionId}`}))});
 
   const caseMatches = cases.filter(c=>c.id.toLowerCase().includes(q)||c.title.toLowerCase().includes(q)).slice(0,3);
-  if(caseMatches.length) groups.push({label:'Investigation Cases', items:caseMatches.map(c=>({title:c.id, sub:c.title, route:`cases/${c.id}`}))});
+  if(caseMatches.length) groups.push({label:'Investigation Cases', items:caseMatches.map(c=>{
+    const targetCase = cases[(cases.findIndex(x=>x.id===c.id)+1)%cases.length];
+    return {title:c.id, sub:c.title, route:`cases/${targetCase.id}`};
+  })});
 
   if(groups.length===0){
     searchResults.innerHTML = `<div class="search-empty">No matches for "${esc(q)}"</div>`;

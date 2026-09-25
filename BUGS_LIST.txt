@@ -1,0 +1,174 @@
+================================================================================
+          SENTRY WATCH — BROKEN WEB CHALLENGE (12 BUGS MASTER LIST)
+================================================================================
+
+Total Intentional Bugs: EXACTLY 12
+Difficulty Breakdown:
+  🟢 VERY EASY : Bugs 1 - 3
+  🔴 HARD      : Bugs 4 - 6
+  🟠 MORE HARD : Bugs 7 - 9
+  🔴 MOST HARD : Bugs 10 - 12
+
+================================================================================
+🟢 TIER 1: VERY EASY BUGS
+================================================================================
+
+[BUG 1] Visible Spelling / Label Error
+--------------------------------------------------------------------------------
+- Location: Left Sidebar Navigation
+- File & Line: index.html (Line 42)
+- Symptom: Menu item is spelled "Investigaton Cases" (missing the letter 'i').
+- Steps to Reproduce:
+  1. Open the application.
+  2. Look at the left sidebar under the "Respond" section.
+  3. Notice the label says "Investigaton Cases" instead of "Investigation Cases".
+- Fix: Change "Investigaton Cases" to "Investigation Cases" in index.html.
+
+
+[BUG 2] Obviously Incorrect Sidebar Menu Icon
+--------------------------------------------------------------------------------
+- Location: Left Sidebar Navigation
+- File & Line: index.html (Line 42)
+- Symptom: "Fraud Alerts" navigation item displays a Heart / Valentine icon instead of a security warning triangle icon.
+- Steps to Reproduce:
+  1. Look at the left sidebar under the "Respond" section.
+  2. Notice the icon next to "Fraud Alerts" is a Heart SVG.
+- Fix: Replace the heart SVG path in index.html with the standard warning triangle path.
+
+
+[BUG 3] Visible Alignment / Spacing Layout Error
+--------------------------------------------------------------------------------
+- Location: Left Sidebar Navigation
+- File & Line: index.html (Line 36)
+- Symptom: In the sidebar, the "Transactions" link is indented 55px to the right, misaligned with all other navigation items.
+- Steps to Reproduce:
+  1. Look at the left sidebar under the "Monitor" section.
+  2. Notice the "Transactions" link is pushed 55px to the right compared to the other items.
+- Fix: Remove `style="margin-left:55px"` from the Transactions `<a>` tag in index.html.
+
+
+================================================================================
+🔴 TIER 2: HARD BUGS
+================================================================================
+
+[BUG 4] Critical Filter Shows Non-Critical Alerts
+--------------------------------------------------------------------------------
+- Location: Fraud Alerts Page (#/alerts)
+- File & Line: script.js (Line 1248)
+- Symptom: Selecting Severity -> "Critical" filter displays alerts with yellow "Medium" severity badges in the table.
+- Steps to Reproduce:
+  1. Navigate to Fraud Alerts (#/alerts).
+  2. In the Severity filter dropdown, select "Critical".
+  3. Notice alerts with yellow Medium badges appear in the results.
+- Fix: In script.js filters definition, change `match: (r, v) => v === 'Critical' ? (r.severity === 'Critical' || r.severity === 'Medium') : r.severity === v` to `match: (r, v) => r.severity === v`.
+
+
+[BUG 5] Case Status Update Desync Between Detail and List Views
+--------------------------------------------------------------------------------
+- Location: Investigation Cases (#/cases & #/cases/:id)
+- File & Line: script.js (Line 1516)
+- Symptom: Changing a case status (e.g. to "Closed") on the Case Detail page updates the detail view, but returning to the Investigation Cases list still shows the old status.
+- Steps to Reproduce:
+  1. Go to Investigation Cases (#/cases) and note CASE-0001 status ("Open").
+  2. Click CASE-0001 to open the detail view.
+  3. Under Case Controls, change status to "Closed" and click "Save case".
+  4. Header and controls update to "Closed".
+  5. Click "Investigaton Cases" in sidebar -> CASE-0001 still shows "Open" in the table.
+- Fix: In renderCaseDetail(), update `c.status = newStatus` instead of `c.detailStatus = newStatus`.
+
+
+[BUG 6] Global Search Opens Wrong Case
+--------------------------------------------------------------------------------
+- Location: Global Search Dropdown (Any page)
+- File & Line: script.js (Line 1838)
+- Symptom: Searching for a specific case (e.g., CASE-0002) shows the correct case in the search dropdown, but clicking it opens CASE-0003 instead.
+- Steps to Reproduce:
+  1. Click the top search bar or press '/'.
+  2. Type "CASE-0002".
+  3. Dropdown shows "CASE-0002".
+  4. Click "CASE-0002" -> View navigates to "#/cases/CASE-0003".
+- Fix: In script.js search handler, change the case route mapping to `route: 'cases/' + c.id`.
+
+
+================================================================================
+🟠 TIER 3: MORE HARD BUGS
+================================================================================
+
+[BUG 7] Dashboard Critical Alerts KPI Count Discrepancy
+--------------------------------------------------------------------------------
+- Location: Fraud Dashboard (#/dashboard)
+- File & Line: script.js (Line 735)
+- Symptom: Dashboard "Critical Fraud Alerts" KPI card displays an inflated number (e.g., 12), while the Alert Severity Mix doughnut chart directly below shows only 7 Critical alerts.
+- Steps to Reproduce:
+  1. Open Fraud Dashboard (#/dashboard).
+  2. Top KPI card says "Critical Fraud Alerts: 12".
+  3. Alert Severity Mix chart right below says "Critical: 7".
+  4. Fraud Alerts page (#/alerts) has only 7 Critical alerts.
+- Fix: In renderDashboard(), change `actualCritAlerts + 5` to `alerts.filter(a => a.severity === 'Critical').length`.
+
+
+[BUG 8] Case Timeline Displays Events in Wrong Chronological Order
+--------------------------------------------------------------------------------
+- Location: Case Detail View (#/cases/:id)
+- File & Line: script.js (Line 1452)
+- Symptom: Events in the Case Timeline are sorted alphabetically by title rather than chronologically by timestamp.
+- Steps to Reproduce:
+  1. Open any case detail (e.g., CASE-0001).
+  2. Check the "Case Timeline" section.
+  3. Notice timestamps are out of order (e.g., "just now" -> "40d ago" -> "12d ago") because entries are sorted alphabetically ("Case closed" -> "Case opened" -> "Investigator assigned").
+- Fix: In renderCaseDetail(), sort timeline entries by date `new Date(b.time) - new Date(a.time)` instead of `localeCompare` on title.
+
+
+[BUG 9] One Transaction Incorrectly Related to a Customer
+--------------------------------------------------------------------------------
+- Location: Transactions Detail View (#/transactions)
+- File & Line: script.js (Line 1145)
+- Symptom: Opening Row 1 in Transactions table displays an unrelated customer ("Maria Torres") in the subtitle, Related Records, and Customer Snapshot, while Account owner is "James Whitfield".
+- Steps to Reproduce:
+  1. Go to Transactions (#/transactions).
+  2. Click the very first row (Row 1).
+  3. Look at the header subtitle: "Customer: Maria Torres (Account: ACC-0000X — James Whitfield)".
+  4. Related Records & Customer Snapshot both show "Maria Torres" while the account belongs to "James Whitfield".
+- Fix: In renderTransactionDetail(), set `const cust = custById(t.customerId)`.
+
+
+================================================================================
+🔴 TIER 4: MOST HARD BUGS
+================================================================================
+
+[BUG 10] Highest-Risk Customers Table Inverted Ranking
+--------------------------------------------------------------------------------
+- Location: Risk Analysis Page (#/risk)
+- File & Line: script.js (Line 1925)
+- Symptom: The table titled "Highest-Risk Customers (Ranked by composite risk score)" displays the lowest-risk customers (scores 5, 8, 12 with green Low Risk badges) at the top of the table instead of critical risk customers.
+- Steps to Reproduce:
+  1. Navigate to Risk Analysis (#/risk).
+  2. Scroll to "Highest-Risk Customers — Ranked by composite risk score".
+  3. Notice the top ranked rows have scores like 5, 8, 12 with green Low Risk meters.
+- Fix: In renderRiskPage(), sort customers descending `b.riskScore - a.riskScore` instead of ascending `a.riskScore - b.riskScore`.
+
+
+[BUG 11] Resolving Alert Leaves Dashboard Count Stale
+--------------------------------------------------------------------------------
+- Location: Fraud Alerts (#/alerts/:id) & Dashboard (#/dashboard)
+- File & Line: script.js (Line 367, 745)
+- Symptom: Resolving an alert updates the alert record and sidebar badge, but the Dashboard "Open Fraud Alerts" KPI remains stale and does not decrement.
+- Steps to Reproduce:
+  1. On Dashboard (#/dashboard), check "Open Fraud Alerts" (e.g., 18).
+  2. Go to Fraud Alerts (#/alerts), open an alert, change status to "Resolved", and save.
+  3. Return to Dashboard (#/dashboard) -> "Open Fraud Alerts" still shows 18.
+- Fix: In renderDashboard(), calculate live open alerts: `alerts.filter(a => a.status === 'Open' || a.status === 'Investigating').length`.
+
+
+[BUG 12] Verifying Evidence Leaves Selected Item Pending & Modifies Another Item
+--------------------------------------------------------------------------------
+- Location: Evidence Center (#/evidence)
+- File & Line: script.js (Line 1618)
+- Symptom: Changing a Pending evidence item (EVD-0001) to Verified shows a success toast for EVD-0001, but leaves EVD-0001 as Pending while changing EVD-0002 to Verified instead.
+- Steps to Reproduce:
+  1. Go to Evidence Center (#/evidence) and find a Pending record (EVD-0001). Note EVD-0002.
+  2. Open EVD-0001, select "Verified", and click "Update status".
+  3. Toast says "EVD-0001 integrity status updated."
+  4. In the table, EVD-0001 is still "Pending", while EVD-0002 has changed to "Verified".
+- Fix: In the click listener for 'ev-save-integrity', set `e.integrityStatus = document.getElementById('ev-integrity-select').value;` instead of mutating the next evidence item.
+================================================================================
