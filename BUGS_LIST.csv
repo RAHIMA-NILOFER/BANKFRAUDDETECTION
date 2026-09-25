@@ -1,0 +1,43 @@
+Bug #,Difficulty,Title,Location / Page,Bug Description / Symptom,Steps to Reproduce
+BUG-01,Very Easy,Visible Spelling / Label Error,Left Sidebar Navigation,"The navigation menu item under the ""Respond"" section is misspelled as ""Investigaton Cases"" (missing the letter ""i"").","1. Open the application.
+2. Look at the left sidebar under the ""Respond"" group.
+3. Observe the menu label reads ""Investigaton Cases""."
+BUG-02,Very Easy,Incorrect Sidebar Menu Icon,Left Sidebar Navigation,"The ""Fraud Alerts"" navigation menu item displays a Heart / Valentine icon instead of a security warning triangle icon.","1. Open the application.
+2. Look at the left sidebar under the ""Respond"" group.
+3. Observe the icon next to ""Fraud Alerts"" is a Heart icon."
+BUG-03,Very Easy,Sidebar Item Alignment / Layout Defect,Left Sidebar Navigation,"The ""Transactions"" menu link is shifted 55px to the right, misaligned with all other navigation links in the sidebar.","1. Open the application.
+2. Look at the left sidebar under the ""Monitor"" group.
+3. Notice that ""Transactions"" is visibly pushed 55px to the right compared to ""Fraud Dashboard"", ""Customer Accounts"", and ""Devices""."
+BUG-04,Hard,Critical Severity Filter Displays Medium Alerts,Fraud Alerts (#/alerts),"Filtering alerts by Severity = ""Critical"" displays alerts with yellow ""Medium"" severity badges inside the filtered results table.","1. Navigate to Fraud Alerts (#/alerts).
+2. Open the Severity dropdown filter and select ""Critical"".
+3. Observe that alerts with yellow Medium badges appear in the table alongside Critical alerts."
+BUG-05,Hard,Case Status Desynchronization Between Detail and List View,Investigation Cases (#/cases & #/cases/:id),"Changing an Investigation Case status (e.g., to ""Closed"") updates the status on the Case Detail page, but returning to the Investigation Cases list table continues to show the old status.","1. Go to Investigation Cases (#/cases) and note the status of CASE-0001 (e.g., ""Open"").
+2. Click CASE-0001 to open the detail view.
+3. Under Case Controls, change status to ""Closed"" and click ""Save case"".
+4. Observe detail view updates to Closed.
+5. Click ""Investigaton Cases"" in the sidebar to return to the list -> CASE-0001 still shows ""Open""."
+BUG-06,Hard,Global Search Navigation Mismatch,Global Search (Top Bar),"Searching for an investigation case by ID or title shows the correct case in the search results dropdown, but clicking that result navigates to a different case.","1. Click the top search bar or press ""/"".
+2. Type ""CASE-0002"".
+3. The dropdown displays ""CASE-0002"" under Investigation Cases.
+4. Click ""CASE-0002"" in the search results -> The URL and page open CASE-0003 instead of CASE-0002."
+BUG-07,More Hard,Critical Alerts KPI Count Discrepancy,Fraud Dashboard (#/dashboard),"The top KPI card ""Critical Fraud Alerts"" shows an inflated number (e.g., 12), contradicting the ""Alert Severity Mix"" doughnut chart directly below which shows only 7 Critical alerts.","1. Navigate to Fraud Dashboard (#/dashboard).
+2. Observe the top KPI card ""Critical Fraud Alerts"" displays 12.
+3. Look directly below at the Alert Severity Mix doughnut chart which shows Critical: 7.
+4. Navigate to Fraud Alerts (#/alerts) and confirm there are only 7 actual Critical alerts."
+BUG-08,More Hard,Case Timeline Events Sorted Non-Chronologically,Case Detail (#/cases/:id),Events in the Case Timeline section are displayed in alphabetical order of their title rather than in chronological order of their timestamps.,"1. Open any case detail (e.g., #/cases/CASE-0001).
+2. Inspect the ""Case Timeline"" section.
+3. Observe timestamps are out of chronological order (e.g., ""just now"" -> ""40d ago"" -> ""12d ago"") because entries are sorted alphabetically by title."
+BUG-09,More Hard,Transaction Associated with Wrong Customer Record,Transactions (#/transactions),"Opening the first transaction in the Transactions table displays an unrelated customer (""Maria Torres"") in the subtitle, Related Records, and Customer Snapshot, while the account belongs to ""James Whitfield"".","1. Navigate to Transactions (#/transactions).
+2. Click the very first row (Row 1) to view transaction details.
+3. Check the subtitle under the Transaction ID: ""Customer: Maria Torres (Account: ACC-0000X — James Whitfield)"".
+4. Check Related Records & Customer Snapshot: both display Maria Torres instead of the actual account owner."
+BUG-10,Most Hard,Highest-Risk Customers Table Inverted Ranking,Risk Analysis (#/risk),"The table titled ""Highest-Risk Customers (Ranked by composite risk score)"" displays the lowest-risk customers (scores 5, 8, 12 with green Low Risk meters) at the top of the table instead of critical risk customers.","1. Navigate to Risk Analysis (#/risk).
+2. Scroll down to the table ""Highest-Risk Customers — Ranked by composite risk score"".
+3. Inspect the top rows: customers with scores 5, 8, 12 (Low Risk) are ranked at the top."
+BUG-11,Most Hard,Resolving Alert Leaves Dashboard Open Count Stale,Fraud Alerts (#/alerts) & Dashboard (#/dashboard),"Resolving an alert updates the individual alert status and sidebar badge, but the Dashboard ""Open Fraud Alerts"" KPI card remains static and does not reflect the resolved alert.","1. Go to Fraud Dashboard (#/dashboard) and note the ""Open Fraud Alerts"" KPI number (e.g., 18).
+2. Go to Fraud Alerts (#/alerts), open an Open alert, change status to ""Resolved"", and click ""Save changes"".
+3. Return to Fraud Dashboard (#/dashboard) -> ""Open Fraud Alerts"" KPI remains unchanged."
+BUG-12,Most Hard,Evidence Integrity Update Targets Wrong Record,Evidence Center (#/evidence),"Updating a Pending evidence item to ""Verified"" displays a confirmation toast for that item, but leaves the selected item as ""Pending"" and updates a different evidence item instead.","1. Navigate to Evidence Center (#/evidence) and identify a Pending item (e.g., EVD-0001). Also note EVD-0002.
+2. Open EVD-0001, change integrity status to ""Verified"", and click ""Update status"".
+3. A toast confirms ""EVD-0001 integrity status updated.""
+4. In the Evidence table, observe EVD-0001 is still ""Pending"", while EVD-0002 has changed to ""Verified""."
